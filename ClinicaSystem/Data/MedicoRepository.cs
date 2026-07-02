@@ -14,7 +14,7 @@ namespace ClinicaSystem.Data
 
             using (var conexion = ConexionDB.ObtenerConexion())
             {
-                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro FROM medicos ORDER BY nombre";
+                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos ORDER BY nombre";
                 using (var comando = new SqlCommand(query, conexion))
                 {
                     conexion.Open();
@@ -38,10 +38,37 @@ namespace ClinicaSystem.Data
 
             using (var conexion = ConexionDB.ObtenerConexion())
             {
-                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro FROM medicos WHERE id_medico = @id";
+                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos WHERE id_medico = @id";
                 using (var comando = new SqlCommand(query, conexion))
                 {
                     comando.Parameters.AddWithValue("@id", idMedico);
+                    conexion.Open();
+                    using (var reader = comando.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            medico = MapearMedico(reader);
+                        }
+                    }
+                }
+            }
+
+            return medico;
+        }
+
+        // NUEVO: Obtener el médico vinculado a un usuario específico.
+        // Devuelve null si ese usuario no tiene médico asociado
+        // (por ejemplo, si es un usuario con rol Medico creado antes de este cambio).
+        public Medico ObtenerPorIdUsuario(int idUsuario)
+        {
+            Medico medico = null;
+
+            using (var conexion = ConexionDB.ObtenerConexion())
+            {
+                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos WHERE id_usuario = @idUsuario";
+                using (var comando = new SqlCommand(query, conexion))
+                {
+                    comando.Parameters.AddWithValue("@idUsuario", idUsuario);
                     conexion.Open();
                     using (var reader = comando.ExecuteReader())
                     {
@@ -61,9 +88,9 @@ namespace ClinicaSystem.Data
         {
             using (var conexion = ConexionDB.ObtenerConexion())
             {
-                string query = @"INSERT INTO medicos (nombre, cedula, especialidad, telefono, turno)
+                string query = @"INSERT INTO medicos (nombre, cedula, especialidad, telefono, turno, id_usuario)
                                   OUTPUT INSERTED.id_medico
-                                  VALUES (@nombre, @cedula, @especialidad, @telefono, @turno)";
+                                  VALUES (@nombre, @cedula, @especialidad, @telefono, @turno, @idUsuario)";
 
                 using (var comando = new SqlCommand(query, conexion))
                 {
@@ -84,7 +111,8 @@ namespace ClinicaSystem.Data
                                     cedula = @cedula,
                                     especialidad = @especialidad,
                                     telefono = @telefono,
-                                    turno = @turno
+                                    turno = @turno,
+                                    id_usuario = @idUsuario
                                   WHERE id_medico = @id";
 
                 using (var comando = new SqlCommand(query, conexion))
@@ -138,10 +166,13 @@ namespace ClinicaSystem.Data
             comando.Parameters.AddWithValue("@especialidad", medico.Especialidad);
             comando.Parameters.AddWithValue("@telefono", string.IsNullOrEmpty(medico.Telefono) ? (object)DBNull.Value : medico.Telefono);
             comando.Parameters.AddWithValue("@turno", medico.Turno);
+            comando.Parameters.AddWithValue("@idUsuario", medico.IdUsuario.HasValue ? (object)medico.IdUsuario.Value : DBNull.Value);
         }
 
         private Medico MapearMedico(SqlDataReader reader)
         {
+            int ordinalIdUsuario = reader.GetOrdinal("id_usuario");
+
             return new Medico
             {
                 IdMedico = reader.GetInt32(reader.GetOrdinal("id_medico")),
@@ -150,7 +181,8 @@ namespace ClinicaSystem.Data
                 Especialidad = reader.GetString(reader.GetOrdinal("especialidad")),
                 Telefono = reader.IsDBNull(reader.GetOrdinal("telefono")) ? null : reader.GetString(reader.GetOrdinal("telefono")),
                 Turno = reader.GetString(reader.GetOrdinal("turno")),
-                FechaRegistro = reader.GetDateTime(reader.GetOrdinal("fecha_registro"))
+                FechaRegistro = reader.GetDateTime(reader.GetOrdinal("fecha_registro")),
+                IdUsuario = reader.IsDBNull(ordinalIdUsuario) ? (int?)null : reader.GetInt32(ordinalIdUsuario)
             };
         }
     }
