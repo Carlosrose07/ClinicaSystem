@@ -63,18 +63,43 @@ namespace ClinicaSystem.Forms
             }
 
             var repo = new ClinicaSystem.Data.UsuarioRepository();
-            var usuarioValido = repo.ValidarCredenciales(usuario, clave);
+            var resultado = repo.ValidarCredenciales(usuario, clave);
 
-            if (usuarioValido == null)
+            // Según el TIPO de resultado se muestra un mensaje distinto.
+            // Ojo: para "credenciales inválidas" el mensaje es genérico a
+            // propósito (no dice si el usuario existe o no, ni cuántos
+            // intentos le quedan), para no darle pistas útiles a alguien
+            // que esté intentando adivinar contraseñas.
+            switch (resultado.Tipo)
             {
-                MessageBox.Show("Usuario o contraseña incorrectos.", "Error de acceso",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
+                case ClinicaSystem.Models.TipoResultadoLogin.Exito:
+                    var menu = new FrmMenuPrincipal(resultado.Usuario);
+                    menu.Show();
+                    this.Hide();
+                    break;
 
-            var menu = new FrmMenuPrincipal(usuarioValido);
-            menu.Show();
-            this.Hide();
+                case ClinicaSystem.Models.TipoResultadoLogin.CuentaBloqueada:
+                    int minutosRestantes = (int)Math.Ceiling(
+                        (resultado.BloqueadoHasta.Value - DateTime.Now).TotalMinutes);
+                    if (minutosRestantes < 1) minutosRestantes = 1;
+
+                    MessageBox.Show(
+                        $"Esta cuenta fue bloqueada temporalmente por demasiados intentos fallidos.\n" +
+                        $"Intenta de nuevo en {minutosRestantes} minuto(s).",
+                        "Cuenta bloqueada", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    break;
+
+                case ClinicaSystem.Models.TipoResultadoLogin.CuentaInactiva:
+                    MessageBox.Show("Esta cuenta está inactiva. Contacta al administrador.",
+                        "Cuenta inactiva", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    break;
+
+                case ClinicaSystem.Models.TipoResultadoLogin.CredencialesInvalidas:
+                default:
+                    MessageBox.Show("Usuario o contraseña incorrectos.", "Error de acceso",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    break;
+            }
         }
     }
 }

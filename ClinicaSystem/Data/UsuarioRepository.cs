@@ -16,25 +16,64 @@ namespace ClinicaSystem.Data
         private const int SALT_BYTES = 16;   // 128 bits
         private const int HASH_BYTES = 32;   // 256 bits
 
+        // ---- Parámetros del bloqueo por intentos fallidos ----
+        // Tras MAX_INTENTOS_FALLIDOS logins incorrectos seguidos, la cuenta
+        // se bloquea por MINUTOS_BLOQUEO minutos. Esto dificulta ataques de
+        // fuerza bruta/diccionario contra el login sin afectar demasiado a
+        // un usuario real que simplemente se equivocó escribiendo la clave.
+        private const int MAX_INTENTOS_FALLIDOS = 5;
+        private const int MINUTOS_BLOQUEO = 15;
+
         // Query base reutilizada: trae el nombre del rol via JOIN.
-        // Incluye clave_salt para poder verificar/migrar el hash.
+        // Incluye clave_salt para poder verificar/migrar el hash, e
+        // intentos_fallidos/bloqueado_hasta para el control de bloqueo.
         private const string SelectBase = @"
-            SELECT u.id_usuario, u.nombre_usuario, u.clave, u.clave_salt, u.id_rol, u.activo, r.nombre_rol
+            SELECT u.id_usuario, u.nombre_usuario, u.clave, u.clave_salt, u.id_rol, u.activo, r.nombre_rol,
+                   u.intentos_fallidos, u.bloqueado_hasta
             FROM usuarios u
             INNER JOIN roles r ON u.id_rol = r.id_rol";
 
-        // Validar credenciales de login. Devuelve el Usuario si son correctas, null si no.
+        // Validar credenciales de login. Devuelve un ResultadoLogin indicando
+        // si fue exitoso y, si no, POR QUÉ falló (credenciales incorrectas,
+        // cuenta bloqueada por intentos fallidos, o cuenta inactiva), para
+        // que la UI (FrmLogin) pueda mostrar el mensaje correcto en cada caso.
         //
         // IMPORTANTE: ya no se compara la clave dentro del WHERE del SELECT
         // (como antes), porque ahora cada usuario puede tener un salt distinto
         // y el hash depende de ese salt. Por eso primero se busca al usuario
         // por nombre, y LUEGO se verifica la clave en memoria.
-        public Usuario ValidarCredenciales(string nombreUsuario, string claveSinHash)
+        public ResultadoLogin ValidarCredenciales(string nombreUsuario, string claveSinHash)
         {
             Usuario usuario = ObtenerPorNombreUsuario(nombreUsuario);
 
-            if (usuario == null || !usuario.Activo)
-                return null;
+            // Usuario no existe: se devuelve el mismo resultado genérico que
+            // credenciales inválidas, para no revelar si el usuario existe o no.
+            if (usuario == null)
+                return new ResultadoLogin { Tipo = TipoResultadoLogin.CredencialesInvalidas };
+
+            // ---- Verificar si la cuenta está bloqueada ----
+            if (usuario.BloqueadoHasta.HasValue)
+            {
+                if (usuario.BloqueadoHasta.Value > DateTime.Now)
+                {
+                    // Todavía dentro de la ventana de bloqueo: no se valida
+                    // la clave ni se cuenta como intento nuevo.
+                    return new ResultadoLogin
+                    {
+                        Tipo = TipoResultadoLogin.CuentaBloqueada,
+                        BloqueadoHasta = usuario.BloqueadoHasta
+                    };
+                }
+
+                // El bloqueo ya venció: se desbloquea automáticamente antes
+                // de continuar, sin necesidad de que un administrador lo haga a mano.
+                DesbloquearUsuario(usuario.IdUsuario);
+                usuario.BloqueadoHasta = null;
+                usuario.IntentosFallidos = 0;
+            }
+
+            if (!usuario.Activo)
+                return new ResultadoLogin { Tipo = TipoResultadoLogin.CuentaInactiva };
 
             bool claveValida;
 
@@ -66,7 +105,37 @@ namespace ClinicaSystem.Data
                 claveValida = usuario.Clave == hashCalculado;
             }
 
-            return claveValida ? usuario : null;
+            if (claveValida)
+            {
+                // Login correcto: si venía con intentos fallidos acumulados
+                // de antes, se resetean para que arranque "limpio".
+                if (usuario.IntentosFallidos > 0)
+                {
+                    ResetearIntentosFallidos(usuario.IdUsuario);
+                    usuario.IntentosFallidos = 0;
+                }
+
+                return new ResultadoLogin { Tipo = TipoResultadoLogin.Exito, Usuario = usuario };
+            }
+
+            // ---- Login incorrecto: contabilizar el intento fallido ----
+            int intentosActualizados = IncrementarIntentosFallidos(usuario.IdUsuario);
+
+            if (intentosActualizados >= MAX_INTENTOS_FALLIDOS)
+            {
+                // Se alcanzó el límite: bloquear la cuenta y reiniciar el
+                // contador (para que al desbloquearse arranque en 0 de nuevo).
+                DateTime hasta = DateTime.Now.AddMinutes(MINUTOS_BLOQUEO);
+                BloquearUsuario(usuario.IdUsuario, hasta);
+
+                return new ResultadoLogin
+                {
+                    Tipo = TipoResultadoLogin.CuentaBloqueada,
+                    BloqueadoHasta = hasta
+                };
+            }
+
+            return new ResultadoLogin { Tipo = TipoResultadoLogin.CredencialesInvalidas };
         }
 
         // Obtener todos los usuarios (para pantalla de administración)
@@ -235,6 +304,82 @@ namespace ClinicaSystem.Data
 
         // ---------- Métodos privados de apoyo ----------
 
+        // ---- Manejo del bloqueo por intentos fallidos ----
+
+        // Suma 1 al contador de intentos fallidos del usuario y devuelve el
+        // valor YA actualizado. Se usa OUTPUT en vez de leer-luego-escribir
+        // para que el incremento sea atómico a nivel de base de datos.
+        private int IncrementarIntentosFallidos(int idUsuario)
+        {
+            using (var conexion = ConexionDB.ObtenerConexion())
+            {
+                string query = @"UPDATE usuarios
+                                  SET intentos_fallidos = intentos_fallidos + 1
+                                  OUTPUT INSERTED.intentos_fallidos
+                                  WHERE id_usuario = @id";
+                using (var comando = new SqlCommand(query, conexion))
+                {
+                    comando.Parameters.AddWithValue("@id", idUsuario);
+                    conexion.Open();
+                    return (int)comando.ExecuteScalar();
+                }
+            }
+        }
+
+        // Marca la cuenta como bloqueada hasta la fecha/hora indicada, y
+        // reinicia el contador de intentos (para que al desbloquearse
+        // arranque de nuevo en 0, no siga sumando desde el límite).
+        private bool BloquearUsuario(int idUsuario, DateTime bloqueadoHasta)
+        {
+            using (var conexion = ConexionDB.ObtenerConexion())
+            {
+                string query = @"UPDATE usuarios
+                                  SET bloqueado_hasta = @bloqueadoHasta, intentos_fallidos = 0
+                                  WHERE id_usuario = @id";
+                using (var comando = new SqlCommand(query, conexion))
+                {
+                    comando.Parameters.AddWithValue("@bloqueadoHasta", bloqueadoHasta);
+                    comando.Parameters.AddWithValue("@id", idUsuario);
+                    conexion.Open();
+                    return comando.ExecuteNonQuery() > 0;
+                }
+            }
+        }
+
+        // Quita el bloqueo de la cuenta (bloqueado_hasta = NULL). Se llama
+        // automáticamente cuando el bloqueo ya venció, y también podría
+        // usarse a futuro desde una pantalla de administración para
+        // desbloquear una cuenta manualmente antes de tiempo.
+        private bool DesbloquearUsuario(int idUsuario)
+        {
+            using (var conexion = ConexionDB.ObtenerConexion())
+            {
+                string query = "UPDATE usuarios SET bloqueado_hasta = NULL, intentos_fallidos = 0 WHERE id_usuario = @id";
+                using (var comando = new SqlCommand(query, conexion))
+                {
+                    comando.Parameters.AddWithValue("@id", idUsuario);
+                    conexion.Open();
+                    return comando.ExecuteNonQuery() > 0;
+                }
+            }
+        }
+
+        // Resetea el contador de intentos fallidos a 0 (sin tocar el bloqueo).
+        // Se usa tras un login exitoso.
+        private bool ResetearIntentosFallidos(int idUsuario)
+        {
+            using (var conexion = ConexionDB.ObtenerConexion())
+            {
+                string query = "UPDATE usuarios SET intentos_fallidos = 0 WHERE id_usuario = @id";
+                using (var comando = new SqlCommand(query, conexion))
+                {
+                    comando.Parameters.AddWithValue("@id", idUsuario);
+                    conexion.Open();
+                    return comando.ExecuteNonQuery() > 0;
+                }
+            }
+        }
+
         // Guarda un hash+salt nuevos para un usuario (usado por CambiarClave
         // y por la migración automática dentro de ValidarCredenciales).
         private bool ActualizarHashYSalt(int idUsuario, string nuevoHash, string nuevoSalt)
@@ -299,6 +444,7 @@ namespace ClinicaSystem.Data
         private Usuario MapearUsuario(SqlDataReader reader)
         {
             int ordSalt = reader.GetOrdinal("clave_salt");
+            int ordBloqueadoHasta = reader.GetOrdinal("bloqueado_hasta");
 
             return new Usuario
             {
@@ -308,7 +454,9 @@ namespace ClinicaSystem.Data
                 ClaveSalt = reader.IsDBNull(ordSalt) ? null : reader.GetString(ordSalt),
                 IdRol = reader.GetInt32(reader.GetOrdinal("id_rol")),
                 Activo = reader.GetBoolean(reader.GetOrdinal("activo")),
-                NombreRol = reader.GetString(reader.GetOrdinal("nombre_rol"))
+                NombreRol = reader.GetString(reader.GetOrdinal("nombre_rol")),
+                IntentosFallidos = reader.GetInt32(reader.GetOrdinal("intentos_fallidos")),
+                BloqueadoHasta = reader.IsDBNull(ordBloqueadoHasta) ? (DateTime?)null : reader.GetDateTime(ordBloqueadoHasta)
             };
         }
     }
