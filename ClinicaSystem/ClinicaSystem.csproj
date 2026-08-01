@@ -49,6 +49,8 @@
   <ItemGroup>
     <Compile Include="Data\CitaRepository.cs" />
     <Compile Include="Data\ConexionDB.cs" />
+    <Compile Include="Data\DatosException.cs" />
+    <Compile Include="Data\DbHelper.cs" />
     <Compile Include="Data\HistorialMedicoRepository.cs" />
     <Compile Include="Data\MedicoRepository.cs" />
     <Compile Include="Data\PacienteRepository.cs" />

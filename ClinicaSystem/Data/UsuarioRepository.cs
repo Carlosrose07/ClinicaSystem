@@ -17,16 +17,10 @@ namespace ClinicaSystem.Data
         private const int HASH_BYTES = 32;   // 256 bits
 
         // ---- Parámetros del bloqueo por intentos fallidos ----
-        // Tras MAX_INTENTOS_FALLIDOS logins incorrectos seguidos, la cuenta
-        // se bloquea por MINUTOS_BLOQUEO minutos. Esto dificulta ataques de
-        // fuerza bruta/diccionario contra el login sin afectar demasiado a
-        // un usuario real que simplemente se equivocó escribiendo la clave.
         private const int MAX_INTENTOS_FALLIDOS = 5;
         private const int MINUTOS_BLOQUEO = 15;
 
         // Query base reutilizada: trae el nombre del rol via JOIN.
-        // Incluye clave_salt para poder verificar/migrar el hash, e
-        // intentos_fallidos/bloqueado_hasta para el control de bloqueo.
         private const string SelectBase = @"
             SELECT u.id_usuario, u.nombre_usuario, u.clave, u.clave_salt, u.id_rol, u.activo, r.nombre_rol,
                    u.intentos_fallidos, u.bloqueado_hasta
@@ -80,17 +74,11 @@ namespace ClinicaSystem.Data
             if (string.IsNullOrEmpty(usuario.ClaveSalt))
             {
                 // ---- Usuario "viejo", todavía con hash SHA256 sin salt ----
-                // Se valida contra el esquema anterior por compatibilidad.
                 claveValida = usuario.Clave == HashearClaveLegacySinSalt(claveSinHash);
 
                 if (claveValida)
                 {
-                    // Migración transparente: como el login fue correcto y
-                    // tenemos la clave en texto plano en este momento, se
-                    // aprovecha para generarle un salt y recalcular su hash
-                    // con PBKDF2. Así, con el uso normal del sistema, todos
-                    // los usuarios activos terminan migrados sin intervención
-                    // manual ni reseteo de contraseñas.
+                    // Migración transparente a PBKDF2 con salt propio.
                     string nuevoSalt = GenerarSalt();
                     string nuevoHash = HashearClave(claveSinHash, nuevoSalt);
                     ActualizarHashYSalt(usuario.IdUsuario, nuevoHash, nuevoSalt);
@@ -123,8 +111,6 @@ namespace ClinicaSystem.Data
 
             if (intentosActualizados >= MAX_INTENTOS_FALLIDOS)
             {
-                // Se alcanzó el límite: bloquear la cuenta y reiniciar el
-                // contador (para que al desbloquearse arranque en 0 de nuevo).
                 DateTime hasta = DateTime.Now.AddMinutes(MINUTOS_BLOQUEO);
                 BloquearUsuario(usuario.IdUsuario, hasta);
 
@@ -141,75 +127,24 @@ namespace ClinicaSystem.Data
         // Obtener todos los usuarios (para pantalla de administración)
         public List<Usuario> ObtenerTodos()
         {
-            var lista = new List<Usuario>();
-
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = SelectBase + " ORDER BY u.nombre_usuario";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            lista.Add(MapearUsuario(reader));
-                        }
-                    }
-                }
-            }
-
-            return lista;
+            string query = SelectBase + " ORDER BY u.nombre_usuario";
+            return DbHelper.EjecutarConsulta(query, null, MapearUsuario);
         }
 
         // Obtener un usuario por su Id
         public Usuario ObtenerPorId(int idUsuario)
         {
-            Usuario usuario = null;
-
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = SelectBase + " WHERE u.id_usuario = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idUsuario);
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            usuario = MapearUsuario(reader);
-                        }
-                    }
-                }
-            }
-
-            return usuario;
+            string query = SelectBase + " WHERE u.id_usuario = @id";
+            var parametros = new Dictionary<string, object> { { "@id", idUsuario } };
+            return DbHelper.EjecutarConsultaUnica(query, parametros, MapearUsuario);
         }
 
         // Obtener un usuario por su nombre de usuario (usado internamente por el login)
         public Usuario ObtenerPorNombreUsuario(string nombreUsuario)
         {
-            Usuario usuario = null;
-
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = SelectBase + " WHERE u.nombre_usuario = @nombreUsuario";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@nombreUsuario", nombreUsuario);
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            usuario = MapearUsuario(reader);
-                        }
-                    }
-                }
-            }
-
-            return usuario;
+            string query = SelectBase + " WHERE u.nombre_usuario = @nombreUsuario";
+            var parametros = new Dictionary<string, object> { { "@nombreUsuario", nombreUsuario } };
+            return DbHelper.EjecutarConsultaUnica(query, parametros, MapearUsuario);
         }
 
         // Insertar un nuevo usuario. Recibe la clave SIN hashear; genera un
@@ -219,46 +154,40 @@ namespace ClinicaSystem.Data
             string salt = GenerarSalt();
             string hash = HashearClave(claveSinHash, salt);
 
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = @"INSERT INTO usuarios (nombre_usuario, clave, clave_salt, id_rol, activo)
-                                  OUTPUT INSERTED.id_usuario
-                                  VALUES (@nombreUsuario, @clave, @claveSalt, @idRol, @activo)";
+            string query = @"INSERT INTO usuarios (nombre_usuario, clave, clave_salt, id_rol, activo)
+                              OUTPUT INSERTED.id_usuario
+                              VALUES (@nombreUsuario, @clave, @claveSalt, @idRol, @activo)";
 
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@nombreUsuario", usuario.NombreUsuario);
-                    comando.Parameters.AddWithValue("@clave", hash);
-                    comando.Parameters.AddWithValue("@claveSalt", salt);
-                    comando.Parameters.AddWithValue("@idRol", usuario.IdRol);
-                    comando.Parameters.AddWithValue("@activo", usuario.Activo);
-                    conexion.Open();
-                    return (int)comando.ExecuteScalar();
-                }
-            }
+            var parametros = new Dictionary<string, object>
+            {
+                { "@nombreUsuario", usuario.NombreUsuario },
+                { "@clave", hash },
+                { "@claveSalt", salt },
+                { "@idRol", usuario.IdRol },
+                { "@activo", usuario.Activo }
+            };
+
+            return DbHelper.EjecutarEscalar<int>(query, parametros);
         }
 
         // Actualizar datos del usuario (NO cambia la clave; para eso usar CambiarClave)
         public bool Actualizar(Usuario usuario)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = @"UPDATE usuarios SET
-                                    nombre_usuario = @nombreUsuario,
-                                    id_rol = @idRol,
-                                    activo = @activo
-                                  WHERE id_usuario = @id";
+            string query = @"UPDATE usuarios SET
+                                nombre_usuario = @nombreUsuario,
+                                id_rol = @idRol,
+                                activo = @activo
+                              WHERE id_usuario = @id";
 
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@nombreUsuario", usuario.NombreUsuario);
-                    comando.Parameters.AddWithValue("@idRol", usuario.IdRol);
-                    comando.Parameters.AddWithValue("@activo", usuario.Activo);
-                    comando.Parameters.AddWithValue("@id", usuario.IdUsuario);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+            var parametros = new Dictionary<string, object>
+            {
+                { "@nombreUsuario", usuario.NombreUsuario },
+                { "@idRol", usuario.IdRol },
+                { "@activo", usuario.Activo },
+                { "@id", usuario.IdUsuario }
+            };
+
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Cambiar la clave de un usuario. Siempre genera un salt NUEVO
@@ -273,33 +202,23 @@ namespace ClinicaSystem.Data
         // Eliminar un usuario por Id
         public bool Eliminar(int idUsuario)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = "DELETE FROM usuarios WHERE id_usuario = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idUsuario);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+            string query = "DELETE FROM usuarios WHERE id_usuario = @id";
+            var parametros = new Dictionary<string, object> { { "@id", idUsuario } };
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Verificar si ya existe ese nombre de usuario (para validar antes de insertar)
         public bool ExisteNombreUsuario(string nombreUsuario, int idUsuarioExcluir = 0)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
+            string query = "SELECT COUNT(1) FROM usuarios WHERE nombre_usuario = @nombreUsuario AND id_usuario <> @idExcluir";
+            var parametros = new Dictionary<string, object>
             {
-                string query = "SELECT COUNT(1) FROM usuarios WHERE nombre_usuario = @nombreUsuario AND id_usuario <> @idExcluir";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@nombreUsuario", nombreUsuario);
-                    comando.Parameters.AddWithValue("@idExcluir", idUsuarioExcluir);
-                    conexion.Open();
-                    int count = (int)comando.ExecuteScalar();
-                    return count > 0;
-                }
-            }
+                { "@nombreUsuario", nombreUsuario },
+                { "@idExcluir", idUsuarioExcluir }
+            };
+
+            int count = DbHelper.EjecutarEscalar<int>(query, parametros);
+            return count > 0;
         }
 
         // ---------- Métodos privados de apoyo ----------
@@ -311,91 +230,59 @@ namespace ClinicaSystem.Data
         // para que el incremento sea atómico a nivel de base de datos.
         private int IncrementarIntentosFallidos(int idUsuario)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = @"UPDATE usuarios
-                                  SET intentos_fallidos = intentos_fallidos + 1
-                                  OUTPUT INSERTED.intentos_fallidos
-                                  WHERE id_usuario = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idUsuario);
-                    conexion.Open();
-                    return (int)comando.ExecuteScalar();
-                }
-            }
+            string query = @"UPDATE usuarios
+                              SET intentos_fallidos = intentos_fallidos + 1
+                              OUTPUT INSERTED.intentos_fallidos
+                              WHERE id_usuario = @id";
+            var parametros = new Dictionary<string, object> { { "@id", idUsuario } };
+            return DbHelper.EjecutarEscalar<int>(query, parametros);
         }
 
         // Marca la cuenta como bloqueada hasta la fecha/hora indicada, y
-        // reinicia el contador de intentos (para que al desbloquearse
-        // arranque de nuevo en 0, no siga sumando desde el límite).
+        // reinicia el contador de intentos.
         private bool BloquearUsuario(int idUsuario, DateTime bloqueadoHasta)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
+            string query = @"UPDATE usuarios
+                              SET bloqueado_hasta = @bloqueadoHasta, intentos_fallidos = 0
+                              WHERE id_usuario = @id";
+            var parametros = new Dictionary<string, object>
             {
-                string query = @"UPDATE usuarios
-                                  SET bloqueado_hasta = @bloqueadoHasta, intentos_fallidos = 0
-                                  WHERE id_usuario = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@bloqueadoHasta", bloqueadoHasta);
-                    comando.Parameters.AddWithValue("@id", idUsuario);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+                { "@bloqueadoHasta", bloqueadoHasta },
+                { "@id", idUsuario }
+            };
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Quita el bloqueo de la cuenta (bloqueado_hasta = NULL). Se llama
-        // automáticamente cuando el bloqueo ya venció, y también podría
-        // usarse a futuro desde una pantalla de administración para
-        // desbloquear una cuenta manualmente antes de tiempo.
+        // automáticamente cuando el bloqueo ya venció.
         private bool DesbloquearUsuario(int idUsuario)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = "UPDATE usuarios SET bloqueado_hasta = NULL, intentos_fallidos = 0 WHERE id_usuario = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idUsuario);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+            string query = "UPDATE usuarios SET bloqueado_hasta = NULL, intentos_fallidos = 0 WHERE id_usuario = @id";
+            var parametros = new Dictionary<string, object> { { "@id", idUsuario } };
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Resetea el contador de intentos fallidos a 0 (sin tocar el bloqueo).
         // Se usa tras un login exitoso.
         private bool ResetearIntentosFallidos(int idUsuario)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = "UPDATE usuarios SET intentos_fallidos = 0 WHERE id_usuario = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idUsuario);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+            string query = "UPDATE usuarios SET intentos_fallidos = 0 WHERE id_usuario = @id";
+            var parametros = new Dictionary<string, object> { { "@id", idUsuario } };
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Guarda un hash+salt nuevos para un usuario (usado por CambiarClave
         // y por la migración automática dentro de ValidarCredenciales).
         private bool ActualizarHashYSalt(int idUsuario, string nuevoHash, string nuevoSalt)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
+            string query = "UPDATE usuarios SET clave = @clave, clave_salt = @claveSalt WHERE id_usuario = @id";
+            var parametros = new Dictionary<string, object>
             {
-                string query = "UPDATE usuarios SET clave = @clave, clave_salt = @claveSalt WHERE id_usuario = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@clave", nuevoHash);
-                    comando.Parameters.AddWithValue("@claveSalt", nuevoSalt);
-                    comando.Parameters.AddWithValue("@id", idUsuario);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+                { "@clave", nuevoHash },
+                { "@claveSalt", nuevoSalt },
+                { "@id", idUsuario }
+            };
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Genera un salt aleatorio criptográficamente seguro y lo devuelve en Base64
@@ -426,7 +313,6 @@ namespace ClinicaSystem.Data
         // Hash SHA256 "viejo" (sin salt), tal como se guardaban las claves
         // antes de esta mejora. Se mantiene SOLO para poder validar el login
         // de usuarios que aún no se han migrado (ver ValidarCredenciales).
-        // No se usa para nada nuevo: todo lo nuevo pasa por HashearClave().
         private string HashearClaveLegacySinSalt(string claveSinHash)
         {
             using (var sha256 = SHA256.Create())
