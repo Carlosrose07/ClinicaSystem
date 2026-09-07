@@ -10,165 +10,122 @@ namespace ClinicaSystem.Data
         // Obtener todos los médicos
         public List<Medico> ObtenerTodos()
         {
-            var lista = new List<Medico>();
+            string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos ORDER BY nombre";
 
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos ORDER BY nombre";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            lista.Add(MapearMedico(reader));
-                        }
-                    }
-                }
-            }
-
-            return lista;
+            return DbHelper.EjecutarConsulta(query, null, MapearMedico);
         }
 
         // Obtener un médico por su Id
         public Medico ObtenerPorId(int idMedico)
         {
-            Medico medico = null;
+            string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos WHERE id_medico = @id";
 
-            using (var conexion = ConexionDB.ObtenerConexion())
+            var parametros = new Dictionary<string, object>
             {
-                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos WHERE id_medico = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idMedico);
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            medico = MapearMedico(reader);
-                        }
-                    }
-                }
-            }
+                { "@id", idMedico }
+            };
 
-            return medico;
+            return DbHelper.EjecutarConsultaUnica(query, parametros, MapearMedico);
         }
 
-        // NUEVO: Obtener el médico vinculado a un usuario específico.
+        // Obtener el médico vinculado a un usuario específico.
         // Devuelve null si ese usuario no tiene médico asociado
         // (por ejemplo, si es un usuario con rol Medico creado antes de este cambio).
         public Medico ObtenerPorIdUsuario(int idUsuario)
         {
-            Medico medico = null;
+            string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos WHERE id_usuario = @idUsuario";
 
-            using (var conexion = ConexionDB.ObtenerConexion())
+            var parametros = new Dictionary<string, object>
             {
-                string query = "SELECT id_medico, nombre, cedula, especialidad, telefono, turno, fecha_registro, id_usuario FROM medicos WHERE id_usuario = @idUsuario";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@idUsuario", idUsuario);
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            medico = MapearMedico(reader);
-                        }
-                    }
-                }
-            }
+                { "@idUsuario", idUsuario }
+            };
 
-            return medico;
+            return DbHelper.EjecutarConsultaUnica(query, parametros, MapearMedico);
         }
 
         // Insertar un nuevo médico. Devuelve el Id generado.
         public int Insertar(Medico medico)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = @"INSERT INTO medicos (nombre, cedula, especialidad, telefono, turno, id_usuario)
-                                  OUTPUT INSERTED.id_medico
-                                  VALUES (@nombre, @cedula, @especialidad, @telefono, @turno, @idUsuario)";
+            string query = @"INSERT INTO medicos (nombre, cedula, especialidad, telefono, turno, id_usuario)
+                              OUTPUT INSERTED.id_medico
+                              VALUES (@nombre, @cedula, @especialidad, @telefono, @turno, @idUsuario)";
 
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    AgregarParametros(comando, medico);
-                    conexion.Open();
-                    return (int)comando.ExecuteScalar();
-                }
-            }
+            var parametros = ConstruirParametros(medico);
+
+            return DbHelper.EjecutarEscalar<int>(query, parametros);
         }
 
         // Actualizar un médico existente
         public bool Actualizar(Medico medico)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = @"UPDATE medicos SET
-                                    nombre = @nombre,
-                                    cedula = @cedula,
-                                    especialidad = @especialidad,
-                                    telefono = @telefono,
-                                    turno = @turno,
-                                    id_usuario = @idUsuario
-                                  WHERE id_medico = @id";
+            string query = @"UPDATE medicos SET
+                                nombre = @nombre,
+                                cedula = @cedula,
+                                especialidad = @especialidad,
+                                telefono = @telefono,
+                                turno = @turno,
+                                id_usuario = @idUsuario
+                              WHERE id_medico = @id";
 
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    AgregarParametros(comando, medico);
-                    comando.Parameters.AddWithValue("@id", medico.IdMedico);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+            var parametros = ConstruirParametros(medico);
+            parametros["@id"] = medico.IdMedico;
+
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Eliminar un médico por Id
         public bool Eliminar(int idMedico)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
+            string query = "DELETE FROM medicos WHERE id_medico = @id";
+
+            var parametros = new Dictionary<string, object>
             {
-                string query = "DELETE FROM medicos WHERE id_medico = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idMedico);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+                { "@id", idMedico }
+            };
+
+            // Si el médico tiene citas asignadas, SQL Server rechaza el DELETE
+            // por la FK (error 547). DbHelper ya traduce eso a un mensaje en
+            // español dentro de DatosException; el Form solo necesita un
+            // catch (DatosException ex) para mostrarlo sin lógica adicional.
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Verificar si ya existe un médico con esa cédula (para validar antes de insertar)
         public bool ExisteCedula(string cedula, int idMedicoExcluir = 0)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
+            string query = "SELECT COUNT(1) FROM medicos WHERE cedula = @cedula AND id_medico <> @idExcluir";
+
+            var parametros = new Dictionary<string, object>
             {
-                string query = "SELECT COUNT(1) FROM medicos WHERE cedula = @cedula AND id_medico <> @idExcluir";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@cedula", cedula);
-                    comando.Parameters.AddWithValue("@idExcluir", idMedicoExcluir);
-                    conexion.Open();
-                    int count = (int)comando.ExecuteScalar();
-                    return count > 0;
-                }
-            }
+                { "@cedula", cedula },
+                { "@idExcluir", idMedicoExcluir }
+            };
+
+            return DbHelper.EjecutarEscalar<int>(query, parametros) > 0;
         }
 
         // ---------- Métodos privados de apoyo ----------
 
-        private void AgregarParametros(SqlCommand comando, Medico medico)
+        // Arma el diccionario de parámetros compartido entre Insertar y Actualizar.
+        private Dictionary<string, object> ConstruirParametros(Medico medico)
         {
-            comando.Parameters.AddWithValue("@nombre", medico.Nombre);
-            comando.Parameters.AddWithValue("@cedula", medico.Cedula);
-            comando.Parameters.AddWithValue("@especialidad", medico.Especialidad);
-            comando.Parameters.AddWithValue("@telefono", string.IsNullOrEmpty(medico.Telefono) ? (object)DBNull.Value : medico.Telefono);
-            comando.Parameters.AddWithValue("@turno", medico.Turno);
-            comando.Parameters.AddWithValue("@idUsuario", medico.IdUsuario.HasValue ? (object)medico.IdUsuario.Value : DBNull.Value);
+            return new Dictionary<string, object>
+            {
+                { "@nombre", medico.Nombre },
+                { "@cedula", medico.Cedula },
+                { "@especialidad", medico.Especialidad },
+                { "@telefono", string.IsNullOrEmpty(medico.Telefono) ? null : medico.Telefono },
+                { "@turno", medico.Turno },
+                // IdUsuario es int? (nullable): un médico puede no tener cuenta
+                // de usuario vinculada todavía. Si HasValue es false, se guarda
+                // como DBNull vía el "?? DBNull.Value" que ya aplica DbHelper
+                // internamente al recibir null en el diccionario.
+                { "@idUsuario", medico.IdUsuario.HasValue ? (object)medico.IdUsuario.Value : null }
+            };
         }
 
+        // Convierte una fila del reader en un objeto Medico. Se pasa como
+        // delegado a DbHelper.EjecutarConsulta / EjecutarConsultaUnica.
         private Medico MapearMedico(SqlDataReader reader)
         {
             int ordinalIdUsuario = reader.GetOrdinal("id_usuario");
