@@ -29,7 +29,7 @@ y un sistema de autenticación basado en roles.
 - Consultas parametrizadas.
 - Manejo de excepciones.
 - Separación de responsabilidades.
-- Hash SHA-256 para contraseñas.
+- PBKDF2 para contraseñas.
 - Validaciones en la interfaz.
 - Control de acceso basado en roles.
 
