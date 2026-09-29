@@ -68,7 +68,7 @@ Presionar **F5** o seleccionar **Start** desde Visual Studio.
 | Windows Forms | Interfaz gráfica |
 | SQL Server Express | Base de datos |
 | ADO.NET | Acceso a datos |
-| SHA-256 | Cifrado de contraseñas |
+| PBKDF2 | Cifrado de contraseñas |
 | Visual Studio | Entorno de desarrollo |
 | Git | Control de versiones |
 | GitHub | Repositorio del proyecto |
