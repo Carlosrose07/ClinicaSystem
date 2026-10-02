@@ -7,7 +7,9 @@ namespace ClinicaSystem.Data
 {
     public class CitaRepository
     {
-        // Query base reutilizada en varios métodos: trae nombre de paciente y médico via JOIN
+        // Query base reutilizada en varios métodos: trae nombre de paciente y médico via JOIN.
+        // Se mantiene como constante para que todos los SELECT devuelvan las mismas columnas
+        // y MapearCita funcione igual en cualquiera de ellos.
         private const string SelectBase = @"
             SELECT c.id_cita, c.id_paciente, c.id_medico, c.fecha, c.hora, c.estado, c.observaciones,
                    p.nombre AS nombre_paciente, m.nombre AS nombre_medico
@@ -18,213 +20,137 @@ namespace ClinicaSystem.Data
         // Obtener todas las citas
         public List<Cita> ObtenerTodas()
         {
-            var lista = new List<Cita>();
-
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = SelectBase + " ORDER BY c.fecha DESC, c.hora DESC";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            lista.Add(MapearCita(reader));
-                        }
-                    }
-                }
-            }
-
-            return lista;
+            // DbHelper abre/cierra la conexión y traduce errores SQL a DatosException,
+            // por eso aquí ya no hay using/Open/try-catch repetidos.
+            return DbHelper.EjecutarConsulta(
+                SelectBase + " ORDER BY c.fecha DESC, c.hora DESC",
+                null,
+                MapearCita);
         }
 
-        // Obtener una cita por su Id
+        // Obtener una cita por su Id (devuelve null si no existe)
         public Cita ObtenerPorId(int idCita)
         {
-            Cita cita = null;
-
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = SelectBase + " WHERE c.id_cita = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idCita);
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            cita = MapearCita(reader);
-                        }
-                    }
-                }
-            }
-
-            return cita;
+            return DbHelper.EjecutarConsultaUnica(
+                SelectBase + " WHERE c.id_cita = @id",
+                new Dictionary<string, object> { { "@id", idCita } },
+                MapearCita);
         }
 
         // Obtener todas las citas de un paciente (para su historial)
         public List<Cita> ObtenerPorPaciente(int idPaciente)
         {
-            var lista = new List<Cita>();
-
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = SelectBase + " WHERE c.id_paciente = @idPaciente ORDER BY c.fecha DESC, c.hora DESC";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@idPaciente", idPaciente);
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            lista.Add(MapearCita(reader));
-                        }
-                    }
-                }
-            }
-
-            return lista;
+            return DbHelper.EjecutarConsulta(
+                SelectBase + " WHERE c.id_paciente = @idPaciente ORDER BY c.fecha DESC, c.hora DESC",
+                new Dictionary<string, object> { { "@idPaciente", idPaciente } },
+                MapearCita);
         }
 
         // Obtener todas las citas de un médico en una fecha (para ver su agenda del día)
         public List<Cita> ObtenerPorMedicoYFecha(int idMedico, DateTime fecha)
         {
-            var lista = new List<Cita>();
-
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = SelectBase + " WHERE c.id_medico = @idMedico AND c.fecha = @fecha ORDER BY c.hora";
-                using (var comando = new SqlCommand(query, conexion))
+            return DbHelper.EjecutarConsulta(
+                SelectBase + " WHERE c.id_medico = @idMedico AND c.fecha = @fecha ORDER BY c.hora",
+                new Dictionary<string, object>
                 {
-                    comando.Parameters.AddWithValue("@idMedico", idMedico);
-                    comando.Parameters.AddWithValue("@fecha", fecha.Date);
-                    conexion.Open();
-                    using (var reader = comando.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            lista.Add(MapearCita(reader));
-                        }
-                    }
-                }
-            }
-
-            return lista;
+                    { "@idMedico", idMedico },
+                    // .Date descarta la hora: la columna fecha se compara solo por día
+                    { "@fecha", fecha.Date }
+                },
+                MapearCita);
         }
 
-        // Verifica si el médico ya tiene una cita en esa fecha/hora (para no duplicar el horario)
-        // idCitaExcluir se usa al editar, para que la cita no choque consigo misma
+        // Verifica si el médico ya tiene una cita en esa fecha/hora (para no duplicar el horario).
+        // idCitaExcluir se usa al editar, para que la cita no choque consigo misma.
+        // Las citas 'Cancelada' no cuentan: liberan el horario.
         public bool ExisteConflictoHorario(int idMedico, DateTime fecha, TimeSpan hora, int idCitaExcluir = 0)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
+            string query = @"SELECT COUNT(1) FROM citas
+                              WHERE id_medico = @idMedico
+                                AND fecha = @fecha
+                                AND hora = @hora
+                                AND estado <> 'Cancelada'
+                                AND id_cita <> @idExcluir";
+
+            int count = DbHelper.EjecutarEscalar<int>(query, new Dictionary<string, object>
             {
-                string query = @"SELECT COUNT(1) FROM citas
-                                  WHERE id_medico = @idMedico
-                                    AND fecha = @fecha
-                                    AND hora = @hora
-                                    AND estado <> 'Cancelada'
-                                    AND id_cita <> @idExcluir";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@idMedico", idMedico);
-                    comando.Parameters.AddWithValue("@fecha", fecha.Date);
-                    comando.Parameters.AddWithValue("@hora", hora);
-                    comando.Parameters.AddWithValue("@idExcluir", idCitaExcluir);
-                    conexion.Open();
-                    int count = (int)comando.ExecuteScalar();
-                    return count > 0;
-                }
-            }
+                { "@idMedico", idMedico },
+                { "@fecha", fecha.Date },
+                { "@hora", hora },
+                { "@idExcluir", idCitaExcluir }
+            });
+
+            return count > 0;
         }
 
         // Insertar una nueva cita. Devuelve el Id generado.
         public int Insertar(Cita cita)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = @"INSERT INTO citas (id_paciente, id_medico, fecha, hora, estado, observaciones)
-                                  OUTPUT INSERTED.id_cita
-                                  VALUES (@idPaciente, @idMedico, @fecha, @hora, @estado, @observaciones)";
+            // OUTPUT INSERTED devuelve el nuevo Id en una sola ida a la base,
+            // por eso se usa EjecutarEscalar en lugar de EjecutarNonQuery.
+            string query = @"INSERT INTO citas (id_paciente, id_medico, fecha, hora, estado, observaciones)
+                              OUTPUT INSERTED.id_cita
+                              VALUES (@idPaciente, @idMedico, @fecha, @hora, @estado, @observaciones)";
 
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    AgregarParametros(comando, cita);
-                    conexion.Open();
-                    return (int)comando.ExecuteScalar();
-                }
-            }
+            return DbHelper.EjecutarEscalar<int>(query, ConstruirParametros(cita));
         }
 
         // Actualizar una cita existente
         public bool Actualizar(Cita cita)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = @"UPDATE citas SET
-                                    id_paciente = @idPaciente,
-                                    id_medico = @idMedico,
-                                    fecha = @fecha,
-                                    hora = @hora,
-                                    estado = @estado,
-                                    observaciones = @observaciones
-                                  WHERE id_cita = @id";
+            string query = @"UPDATE citas SET
+                                id_paciente = @idPaciente,
+                                id_medico = @idMedico,
+                                fecha = @fecha,
+                                hora = @hora,
+                                estado = @estado,
+                                observaciones = @observaciones
+                              WHERE id_cita = @id";
 
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    AgregarParametros(comando, cita);
-                    comando.Parameters.AddWithValue("@id", cita.IdCita);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+            var parametros = ConstruirParametros(cita);
+            parametros.Add("@id", cita.IdCita); // solo el UPDATE necesita el Id
+
+            return DbHelper.EjecutarNonQuery(query, parametros) > 0;
         }
 
         // Cambiar solo el estado de una cita (ej. Pendiente -> Confirmada -> Completada/Cancelada)
         public bool CambiarEstado(int idCita, string nuevoEstado)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = "UPDATE citas SET estado = @estado WHERE id_cita = @id";
-                using (var comando = new SqlCommand(query, conexion))
+            return DbHelper.EjecutarNonQuery(
+                "UPDATE citas SET estado = @estado WHERE id_cita = @id",
+                new Dictionary<string, object>
                 {
-                    comando.Parameters.AddWithValue("@estado", nuevoEstado);
-                    comando.Parameters.AddWithValue("@id", idCita);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+                    { "@estado", nuevoEstado },
+                    { "@id", idCita }
+                }) > 0;
         }
 
         // Eliminar una cita por Id
         public bool Eliminar(int idCita)
         {
-            using (var conexion = ConexionDB.ObtenerConexion())
-            {
-                string query = "DELETE FROM citas WHERE id_cita = @id";
-                using (var comando = new SqlCommand(query, conexion))
-                {
-                    comando.Parameters.AddWithValue("@id", idCita);
-                    conexion.Open();
-                    return comando.ExecuteNonQuery() > 0;
-                }
-            }
+            return DbHelper.EjecutarNonQuery(
+                "DELETE FROM citas WHERE id_cita = @id",
+                new Dictionary<string, object> { { "@id", idCita } }) > 0;
         }
 
         // ---------- Métodos privados de apoyo ----------
 
-        private void AgregarParametros(SqlCommand comando, Cita cita)
+        // Arma el diccionario de parámetros común a Insertar y Actualizar.
+        // Observaciones es opcional: si viene vacía se guarda NULL en la base (no cadena vacía).
+        private Dictionary<string, object> ConstruirParametros(Cita cita)
         {
-            comando.Parameters.AddWithValue("@idPaciente", cita.IdPaciente);
-            comando.Parameters.AddWithValue("@idMedico", cita.IdMedico);
-            comando.Parameters.AddWithValue("@fecha", cita.Fecha.Date);
-            comando.Parameters.AddWithValue("@hora", cita.Hora);
-            comando.Parameters.AddWithValue("@estado", cita.Estado);
-            comando.Parameters.AddWithValue("@observaciones", string.IsNullOrEmpty(cita.Observaciones) ? (object)DBNull.Value : cita.Observaciones);
+            return new Dictionary<string, object>
+            {
+                { "@idPaciente", cita.IdPaciente },
+                { "@idMedico", cita.IdMedico },
+                { "@fecha", cita.Fecha.Date },
+                { "@hora", cita.Hora },
+                { "@estado", cita.Estado },
+                { "@observaciones", string.IsNullOrEmpty(cita.Observaciones) ? (object)DBNull.Value : cita.Observaciones }
+            };
         }
 
+        // Convierte una fila del reader en un objeto Cita. DbHelper la invoca por cada fila.
         private Cita MapearCita(SqlDataReader reader)
         {
             return new Cita
