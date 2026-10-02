@@ -55,7 +55,7 @@
             this.btnPacientes.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
             this.btnPacientes.ForeColor = System.Drawing.Color.White;
             this.btnPacientes.Location = new System.Drawing.Point(51, 93);
-            this.btnPacientes.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.btnPacientes.Margin = new System.Windows.Forms.Padding(4);
             this.btnPacientes.Name = "btnPacientes";
             this.btnPacientes.Size = new System.Drawing.Size(231, 60);
             this.btnPacientes.TabIndex = 1;
@@ -71,7 +71,7 @@
             this.btnMedicos.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
             this.btnMedicos.ForeColor = System.Drawing.Color.White;
             this.btnMedicos.Location = new System.Drawing.Point(51, 173);
-            this.btnMedicos.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.btnMedicos.Margin = new System.Windows.Forms.Padding(4);
             this.btnMedicos.Name = "btnMedicos";
             this.btnMedicos.Size = new System.Drawing.Size(231, 60);
             this.btnMedicos.TabIndex = 2;
@@ -81,13 +81,13 @@
             // 
             // btnCitas
             // 
-            this.btnCitas.BackColor = System.Drawing.Color.DarkSlateGray;
+            this.btnCitas.BackColor = System.Drawing.Color.Teal;
             this.btnCitas.FlatAppearance.BorderColor = System.Drawing.Color.Black;
             this.btnCitas.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnCitas.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
             this.btnCitas.ForeColor = System.Drawing.Color.White;
             this.btnCitas.Location = new System.Drawing.Point(51, 253);
-            this.btnCitas.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.btnCitas.Margin = new System.Windows.Forms.Padding(4);
             this.btnCitas.Name = "btnCitas";
             this.btnCitas.Size = new System.Drawing.Size(231, 60);
             this.btnCitas.TabIndex = 3;
@@ -97,13 +97,13 @@
             // 
             // btnHistorial
             // 
-            this.btnHistorial.BackColor = System.Drawing.Color.DarkSlateGray;
+            this.btnHistorial.BackColor = System.Drawing.Color.Teal;
             this.btnHistorial.FlatAppearance.BorderColor = System.Drawing.Color.Black;
             this.btnHistorial.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnHistorial.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
             this.btnHistorial.ForeColor = System.Drawing.Color.White;
             this.btnHistorial.Location = new System.Drawing.Point(51, 333);
-            this.btnHistorial.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.btnHistorial.Margin = new System.Windows.Forms.Padding(4);
             this.btnHistorial.Name = "btnHistorial";
             this.btnHistorial.Size = new System.Drawing.Size(231, 60);
             this.btnHistorial.TabIndex = 4;
@@ -113,13 +113,13 @@
             // 
             // btnUsuarios
             // 
-            this.btnUsuarios.BackColor = System.Drawing.Color.DarkSlateGray;
+            this.btnUsuarios.BackColor = System.Drawing.Color.Teal;
             this.btnUsuarios.FlatAppearance.BorderColor = System.Drawing.Color.Black;
             this.btnUsuarios.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnUsuarios.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
             this.btnUsuarios.ForeColor = System.Drawing.Color.White;
             this.btnUsuarios.Location = new System.Drawing.Point(51, 413);
-            this.btnUsuarios.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.btnUsuarios.Margin = new System.Windows.Forms.Padding(4);
             this.btnUsuarios.Name = "btnUsuarios";
             this.btnUsuarios.Size = new System.Drawing.Size(231, 60);
             this.btnUsuarios.TabIndex = 5;
@@ -134,7 +134,7 @@
             this.btnCerrarSesion.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
             this.btnCerrarSesion.ForeColor = System.Drawing.Color.White;
             this.btnCerrarSesion.Location = new System.Drawing.Point(51, 507);
-            this.btnCerrarSesion.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.btnCerrarSesion.Margin = new System.Windows.Forms.Padding(4);
             this.btnCerrarSesion.Name = "btnCerrarSesion";
             this.btnCerrarSesion.Size = new System.Drawing.Size(231, 53);
             this.btnCerrarSesion.TabIndex = 6;
@@ -156,7 +156,7 @@
             this.Controls.Add(this.btnUsuarios);
             this.Controls.Add(this.btnCerrarSesion);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
-            this.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.Margin = new System.Windows.Forms.Padding(4);
             this.Name = "FrmMenuPrincipal";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.Text = "Menú Principal - Clínica System";
